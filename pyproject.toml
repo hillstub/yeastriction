@@ -1,0 +1,27 @@
+[tool.poetry]
+name = "yeastriction"
+version = "0.5.0"
+description = ""
+authors = ["Harmen van Rossum <harmen@cradle.bio>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.9"
+install = "^1.3.5"
+dash = {extras = ["diskcache"], version = "^2.17.1"}
+plotly = "^5.22.0"
+dash-bootstrap-components = "^1.6.0"
+sqlalchemy = "^2.0.30"
+sqlmodel = "^0.0.18"
+viennarna = "^2.6.4"
+primer3-py = "^2.0.3"
+gunicorn = "^22.0.0"
+pandas = "^2.2.2"
+python-dotenv = "^1.0.1"
+diskcache = "^5.6.3"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

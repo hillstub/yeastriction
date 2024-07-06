@@ -1,0 +1,61 @@
+.accordion-body {
+    padding: 0 !important;
+}
+
+/* styles.css */
+
+.custom-table .dash-table-container .dash-spreadsheet-container {
+    border: none;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    border-radius: 5px;
+}
+
+.custom-table .dash-header {
+    font-weight: bold;
+    text-align: center;
+    background-color: #007bff;
+    color: white;
+    padding: 10px;
+    font-size: 16px;
+    border-top-left-radius: 5px;
+    border-top-right-radius: 5px;
+}
+
+.custom-table .dash-table-container .dash-spreadsheet-inner {
+    border-bottom-left-radius: 5px;
+    border-bottom-right-radius: 5px;
+}
+
+.custom-table .dash-table-container .cell-container {
+    padding: 10px;
+    font-size: 14px;
+    font-family: 'Arial', sans-serif;
+    text-align: left;
+}
+
+.custom-table .dash-table-container .dash-table .dash-fixed-column {
+    background-color: rgba(0, 123, 255, 0.1);
+}
+
+.custom-table .dash-table-container .dash-table .dash-header {
+    background-color: #007bff;
+    color: white;
+}
+
+.custom-table .dash-table-container .dash-table .dash-header .column-header-name {
+    font-weight: bold;
+    font-size: 16px;
+}
+
+.custom-table .dash-table-container .dash-table .dash-cell {
+    border: 1px solid #ddd;
+    padding: 10px;
+}
+
+.custom-table .dash-table-container .dash-table .dash-row.even {
+    background-color: white;
+}
+
+.custom-table .dash-table-container .dash-table .dash-row.odd {
+    background-color: rgba(0, 123, 255, 0.1);
+}
