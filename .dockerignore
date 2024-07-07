@@ -1,0 +1,10 @@
+.DS_Store
+.env
+.github/
+.venv/
+cache/
+*.py[cod]
+**/__pycache__
+data/*
+test.ipynb
+docker-compose.yaml

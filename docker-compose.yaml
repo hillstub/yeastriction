@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  yeastriction:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8050:8050"
+    environment:
+      - GENOMES_DIR=/app/data
+      - DATABASE_URL=sqlite:///./data/database.db
+      - ALLOW_IMPORT=True
+    volumes:
+      - ./data/:/app/data

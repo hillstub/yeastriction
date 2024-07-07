@@ -1,0 +1,8 @@
+.DS_Store
+.env
+.venv/
+cache/
+*.py[cod]
+**/__pycache__
+data/*
+test.ipynb
