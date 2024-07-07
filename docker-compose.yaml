@@ -2,9 +2,7 @@ version: '3.8'
 
 services:
   yeastriction:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ghcr.io/hillstub/yeastriction:latest
     ports:
       - "8050:8050"
     environment:
