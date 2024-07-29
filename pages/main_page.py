@@ -27,13 +27,13 @@ def fetch_dna_build_options(crispr_system_id):
 
 def fetch_strain_options():
     with LocalSession() as session:
-        strains = session.query(Strain).all()
+        strains = session.query(Strain).order_by(Strain.name).all()
         options = [{'value': strain.id, 'label': strain.name} for strain in strains]
     return options
 
 def fetch_locus_options(strain_id):
     with LocalSession() as session:
-        loci = session.query(Locus).filter(Locus.strain_id == strain_id).all()
+        loci = session.query(Locus).filter(Locus.strain_id == strain_id).order_by(Locus.symbol).all()
         options = [{'value': locus.id, 'label': f'{locus.orf} ({locus.symbol})' if locus.symbol else locus.orf} for locus in loci]
     return options
 
