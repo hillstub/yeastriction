@@ -33,7 +33,7 @@ def fetch_strain_options():
 
 def fetch_locus_options(strain_id):
     with LocalSession() as session:
-        loci = session.query(Locus).filter(Locus.strain_id == strain_id).order_by(Locus.symbol).all()
+        loci = session.query(Locus).filter(Locus.strain_id == strain_id).order_by(Locus.orf).all()
         options = [{'value': locus.id, 'label': f'{locus.orf} ({locus.symbol})' if locus.symbol else locus.orf} for locus in loci]
     return options
 
