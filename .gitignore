@@ -6,3 +6,4 @@ cache/
 **/__pycache__
 data/*
 test.ipynb
+docker-compose.tudelft.yaml

@@ -122,6 +122,9 @@ class Locus(SQLModel, table=True):
         return reverse_complement(self.repair_oligo_fw)
 
     def get_diagnostic_primers(self, session: Session):
+        def is_valid_dna_sequence(sequence):
+            return bool(re.match("^[AGTC]*$", sequence))
+                
         if self.forward_diagnostic_primer_id and self.reverse_diagnostic_primer_id:
             return self.forward_diagnostic_primer.sequence, self.reverse_diagnostic_primer.sequence
 
@@ -130,6 +133,10 @@ class Locus(SQLModel, table=True):
 
         ko_locus = self.sequence[:self.start_orf-60] + self.sequence[self.end_orf+60:]
         if len(ko_locus) <= 50:
+            return '', ''
+        
+        # we don't support ambigious bases.
+        if not re.match("^[AGTC]*$", ko_locus):
             return '', ''
 
         input_sequence = ko_locus
