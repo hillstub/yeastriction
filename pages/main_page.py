@@ -4,38 +4,92 @@ from dash import dcc, html, Input, Output, State, MATCH, ALL, callback
 import pandas as pd
 import dash_bootstrap_components as dbc
 from dash import dash_table
+from typing import List, Dict, Any
+import logging
+from sqlalchemy.exc import SQLAlchemyError
 
 from models import Strain, Locus, Target, CRISPRSystem, search_targets, engine, LocalSession
-
-
-GENOMES_DIR = os.getenv('GENOMES_DIR')
+from config import GENOMES_DIR
 
 
 dash.register_page(__name__, path='/')
 
-def fetch_crispr_system_options():
-    with LocalSession() as session:
-        crispr_systems = session.query(CRISPRSystem).all()
-        options = [{'value': crispr_system.id, 'label': crispr_system.name} for crispr_system in crispr_systems]
-    return options
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def fetch_dna_build_options(crispr_system_id):
-    with LocalSession() as session:
-        crispr_system = session.query(CRISPRSystem).filter(CRISPRSystem.id == crispr_system_id).first()
-        options = [{'value': oligo_build_method['name'], 'label': oligo_build_method['name']} for oligo_build_method in crispr_system.oligo_build_methods]
-    return options
+def fetch_crispr_system_options() -> List[Dict[str, Any]]:
+    """
+    Fetch all available CRISPR systems from the database.
 
-def fetch_strain_options():
-    with LocalSession() as session:
-        strains = session.query(Strain).order_by(Strain.name).all()
-        options = [{'value': strain.id, 'label': strain.name} for strain in strains]
-    return options
+    Returns:
+        List[Dict[str, Any]]: A list of dictionaries containing CRISPR system options.
+        Each dictionary has 'value' (system ID) and 'label' (system name) keys.
+    """
+    try:
+        with LocalSession() as session:
+            crispr_systems = session.query(CRISPRSystem).all()
+            options = [{'value': crispr_system.id, 'label': crispr_system.name} for crispr_system in crispr_systems]
+        return options
+    except SQLAlchemyError as e:
+        logger.error(f"Error fetching CRISPR system options: {str(e)}")
+        return []
 
-def fetch_locus_options(strain_id):
-    with LocalSession() as session:
-        loci = session.query(Locus).filter(Locus.strain_id == strain_id).order_by(Locus.orf).all()
-        options = [{'value': locus.id, 'label': f'{locus.orf} ({locus.symbol})' if locus.symbol else locus.orf} for locus in loci]
-    return options
+def fetch_dna_build_options(crispr_system_id: int) -> List[Dict[str, str]]:
+    """
+    Fetch DNA build options for a specific CRISPR system.
+
+    Args:
+        crispr_system_id (int): The ID of the CRISPR system.
+
+    Returns:
+        List[Dict[str, str]]: A list of dictionaries containing DNA build options.
+        Each dictionary has 'value' and 'label' keys representing the build method name.
+    """
+    try:
+        with LocalSession() as session:
+            crispr_system = session.query(CRISPRSystem).filter(CRISPRSystem.id == crispr_system_id).first()
+            options = [{'value': oligo_build_method['name'], 'label': oligo_build_method['name']} for oligo_build_method in crispr_system.oligo_build_methods]
+        return options
+    except SQLAlchemyError as e:
+        logger.error(f"Error fetching DNA build options: {str(e)}")
+        return []
+
+def fetch_strain_options() -> List[Dict[str, Any]]:
+    """
+    Fetch all available strains from the database.
+
+    Returns:
+        List[Dict[str, Any]]: A list of dictionaries containing strain options.
+        Each dictionary has 'value' (strain ID) and 'label' (strain name) keys.
+    """
+    try:
+        with LocalSession() as session:
+            strains = session.query(Strain).order_by(Strain.name).all()
+            options = [{'value': strain.id, 'label': strain.name} for strain in strains]
+        return options
+    except SQLAlchemyError as e:
+        logger.error(f"Error fetching strain options: {str(e)}")
+        return []
+
+def fetch_locus_options(strain_id: int) -> List[Dict[str, Any]]:
+    """
+    Fetch locus options for a specific strain.
+
+    Args:
+        strain_id (int): The ID of the strain.
+
+    Returns:
+        List[Dict[str, Any]]: A list of dictionaries containing locus options.
+        Each dictionary has 'value' (locus ID) and 'label' (locus ORF and symbol) keys.
+    """
+    try:
+        with LocalSession() as session:
+            loci = session.query(Locus).filter(Locus.strain_id == strain_id).order_by(Locus.orf).all()
+            options = [{'value': locus.id, 'label': f'{locus.orf} ({locus.symbol})' if locus.symbol else locus.orf} for locus in loci]
+        return options
+    except SQLAlchemyError as e:
+        logger.error(f"Error fetching locus options: {str(e)}")
+        return []
 
 layout = dbc.Container([
     html.H2('Yeastriction: Design guide RNAs for CRISPR-Cas9 in yeast', className='text-center my-4'),
@@ -155,7 +209,16 @@ layout = dbc.Container([
     Input('crispr-system-dropdown', 'value')
 )
 def set_dna_build_method_options(selected_crispr_system):
-    print(selected_crispr_system)
+    """
+    Callback to update DNA build method options based on the selected CRISPR system.
+
+    Args:
+        selected_crispr_system (int): The ID of the selected CRISPR system.
+
+    Returns:
+        List[Dict[str, str]]: A list of DNA build method options for the selected CRISPR system.
+    """
+    logger.info(f"Selected CRISPR system: {selected_crispr_system}")
     if selected_crispr_system is not None:
         return fetch_dna_build_options(selected_crispr_system)
     else:
@@ -166,7 +229,16 @@ def set_dna_build_method_options(selected_crispr_system):
     Input('strain-dropdown', 'value')
 )
 def update_locus_dropdown(strain_id):
-    print(strain_id)
+    """
+    Callback to update locus dropdown options based on the selected strain.
+
+    Args:
+        strain_id (int): The ID of the selected strain.
+
+    Returns:
+        List[Dict[str, Any]]: A list of locus options for the selected strain.
+    """
+    logger.info(f"Selected strain: {strain_id}")
     if not strain_id:
         return []
     return fetch_locus_options(strain_id)
@@ -174,13 +246,26 @@ def update_locus_dropdown(strain_id):
 @callback(
     Output('targets-table-container', 'children'),
     Output('selected-targets-store', 'data', allow_duplicate=True),
-#    Input('find-targets-button', 'n_clicks'),
     State('crispr-system-dropdown', 'value'),
     Input('locus-dropdown', 'value'),
     State('selected-targets-store', 'data'),
     prevent_initial_call=True
 )
 def find_targets(crispr_system_id, locus_ids, selected_targets):
+    """
+    Callback to find targets for selected loci and update the targets table.
+
+    Args:
+        crispr_system_id (int): The ID of the selected CRISPR system.
+        locus_ids (List[int]): A list of selected locus IDs.
+        selected_targets (Dict): Currently selected targets.
+
+    Returns:
+        Tuple[dash_bootstrap_components.Accordion, Dict]: 
+            - An Accordion component containing target information for each locus.
+            - Updated selected targets data.
+    """
+
     if not locus_ids:
         return '', selected_targets
     accordions = []
@@ -273,6 +358,17 @@ def find_targets(crispr_system_id, locus_ids, selected_targets):
     State('selected-targets-store', 'data')
 )
 def update_selected_target(selected_rows, table_data, selected_targets):
+    """
+    Callback to update the title of an accordion item when a target is selected.
+
+    Args:
+        selected_rows (List[int]): Indices of selected rows in the targets table.
+        table_data (List[Dict]): Data of the targets table.
+        selected_targets (Dict): Currently selected targets.
+
+    Returns:
+        str: Updated title for the accordion item.
+    """
     if selected_rows:
         with LocalSession() as session:
             selected_row = selected_rows[0]
@@ -291,6 +387,17 @@ def update_selected_target(selected_rows, table_data, selected_targets):
     State('selected-targets-store', 'data')
 )
 def store_selected_targets(selected_rows, table_data, selected_targets):
+    """
+    Callback to store selected targets in the selected-targets-store.
+
+    Args:
+        selected_rows (List[List[int]]): List of selected row indices for each targets table.
+        table_data (List[List[Dict]]): Data of all targets tables.
+        selected_targets (Dict): Currently selected targets.
+
+    Returns:
+        Dict: Updated selected targets data.
+    """
     if selected_rows:
         for i, rows in enumerate(selected_rows):
             if rows:
@@ -307,6 +414,16 @@ def store_selected_targets(selected_rows, table_data, selected_targets):
     Input('selected-targets-store', 'data')
 )
 def update_selected_targets_table(dna_build_method, selected_targets):
+    """
+    Callback to update the selected targets table based on the DNA build method and selected targets.
+
+    Args:
+        dna_build_method (str): The selected DNA build method.
+        selected_targets (Dict): Currently selected targets.
+
+    Returns:
+        List[Dict]: Updated data for the selected targets table.
+    """
     rows = []
     with LocalSession() as session:
         
@@ -314,20 +431,20 @@ def update_selected_targets_table(dna_build_method, selected_targets):
             locus = session.query(Locus).filter(Locus.id == locus_id).first()
             target = session.query(Target).filter(Target.id == target['id']).first()
 
-            dg_oligo_seq_fw, dg_oligo_seq_rv = locus.get_diagnostic_primers(session=session)
+            diagnostic_oligo_forward, diagnostic_oligo_reverse = locus.get_diagnostic_primers(session=session)
             
             for build_oligo in target.get_build_oligos(session=session, dna_build_method=dna_build_method):
                 rows.append(build_oligo)
 
-            repair_oligo_fw = {'primer_name': f'{locus.display_name}_repair oligo fw', 'primer_sequence': locus.repair_oligo_fw}
-            repair_oligo_rv = {'primer_name': f'{locus.display_name}_repair oligo rv', 'primer_sequence': locus.repair_oligo_rv}
-            dg_oligo_fw = {'primer_name': f'{locus.display_name}_dg fw', 'primer_sequence': dg_oligo_seq_fw}
-            dg_oligo_rv = {'primer_name': f'{locus.display_name}_dg rv', 'primer_sequence': dg_oligo_seq_rv}        
+            repair_oligo_forward = {'primer_name': f'{locus.display_name}_repair oligo fw', 'primer_sequence': locus.repair_oligo_fw}
+            repair_oligo_reverse = {'primer_name': f'{locus.display_name}_repair oligo rv', 'primer_sequence': locus.repair_oligo_rv}
+            diagnostic_oligo_forward = {'primer_name': f'{locus.display_name}_dg fw', 'primer_sequence': diagnostic_oligo_forward}
+            diagnostic_oligo_reverse = {'primer_name': f'{locus.display_name}_dg rv', 'primer_sequence': diagnostic_oligo_reverse}        
             rows.extend([
-                repair_oligo_fw,
-                repair_oligo_rv,
-                dg_oligo_fw,
-                dg_oligo_rv
+                repair_oligo_forward,
+                repair_oligo_reverse,
+                diagnostic_oligo_forward,
+                diagnostic_oligo_reverse
             ])
 
     return rows
@@ -338,5 +455,15 @@ def update_selected_targets_table(dna_build_method, selected_targets):
     State('selected-targets-table', 'data'),
 )
 def selected(n, selected_targets):
+    """
+    Callback to copy selected targets data to clipboard.
+
+    Args:
+        n (int): Number of times the clipboard button has been clicked.
+        selected_targets (List[Dict]): Data of the selected targets table.
+
+    Returns:
+        str: Tab-separated values of selected targets for clipboard.
+    """
     df = pd.DataFrame(selected_targets)
     return df.to_csv(index=False, header=False, sep='\t')

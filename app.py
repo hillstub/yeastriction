@@ -24,7 +24,7 @@ app = dash.Dash(__name__, use_pages=True, external_stylesheets=[dbc.themes.BOOTS
 app.layout = html.Div(children=[
     dcc.Location(id='url', refresh=False),
     dbc.NavbarSimple(
-        brand='Yeastriction',
+        brand='Yeastriction v0.2',
         brand_href='/',
         color='primary',
         dark=True,

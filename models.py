@@ -2,7 +2,7 @@ import os
 import subprocess
 import tempfile
 import json
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
 from sqlmodel import Field, Relationship, SQLModel, Session, create_engine, select
 from sqlalchemy import create_engine
@@ -13,6 +13,7 @@ import primer3
 import re
 import RNA
 from dotenv import load_dotenv
+from utils import reverse_complement, getRNACentroidStructure
 
 load_dotenv()
 
@@ -21,7 +22,22 @@ DATABASE_URL = os.getenv('DATABASE_URL')
 engine = create_engine(DATABASE_URL)
 LocalSession = sessionmaker(bind=engine)
 
+MINIMUM_FLANKING_SEQUENCE = 85
+KNOCKOUT_LOCUS_PADDING = 60
+MINIMUM_KNOCKOUT_LOCUS_LENGTH = 50
+
 class CRISPRSystem(SQLModel, table=True):
+    """
+    Represents a CRISPR system in the database.
+
+    Attributes:
+        id (int): The unique identifier for the CRISPR system.
+        name (str): The name of the CRISPR system.
+        recognition_sequence_regexp (str): The regular expression for the recognition sequence.
+        rna_template_sequence (str): The RNA template sequence for the CRISPR system.
+        target_filter_function (str): The name of the function used to filter targets.
+        oligo_build_methods (List[Dict]): A list of dictionaries describing oligo build methods.
+    """
     id: int = Field(default=None, primary_key=True)
     name: str
     target_filter_function: str
@@ -32,22 +48,63 @@ class CRISPRSystem(SQLModel, table=True):
 
 
 class RNAFold(SQLModel, table=True):
+    """
+    Represents an RNA fold in the database.
+
+    Attributes:
+        id (int): The unique identifier for the RNA fold.
+        notation (str): The notation representing the RNA fold structure.
+        score (float): The score associated with the RNA fold.
+        notation_binding_only (str): The notation representing only the binding part of the RNA fold.
+    """
     id: int = Field(default=None, primary_key=True)
     notation: Optional[str]
     notation_binding_only: Optional[str]
     score: Optional[float]
 
 class DiagnosticPrimer(SQLModel, table=True):
+    """
+    Represents a diagnostic primer in the database.
+
+    Attributes:
+        id (int): The unique identifier for the diagnostic primer.
+        sequence (str): The sequence of the diagnostic primer.
+    """
     id: int = Field(default=None, primary_key=True)
     sequence: Optional[str]
 
 class Strain(SQLModel, table=True):
+    """
+    Represents a strain in the database.
+
+    Attributes:
+        id (int): The unique identifier for the strain.
+        name (str): The name of the strain.
+        description (str): The description of the strain.
+        loci (relationship): Relationship to Locus objects associated with this strain.
+    """
     id: int = Field(default=None, primary_key=True)
     name: str = Field(default="", alias='name')
     description: str = Field(default="", alias='description')
     loci: Optional[List["Locus"]] = Relationship(back_populates="strain")
 
 class Target(SQLModel, table=True):
+    """
+    Represents a target in the database.
+
+    Attributes:
+        id (int): The unique identifier for the target.
+        sequence (str): The sequence of the target.
+        sequence_wo_pam (str): The sequence without the PAM (Protospacer Adjacent Motif).
+        position (int): The position of the target in the locus sequence.
+        GC_content (float): The GC content of the target sequence.
+        z_score (float): The calculated z-score for the target.
+        locus_id (int): The ID of the associated locus.
+        locus (relationship): Relationship to the associated Locus object.
+        crispr_system_id (int): The ID of the associated CRISPR system.
+        crispr_system (relationship): Relationship to the associated CRISPRSystem object.
+        rna_fold (relationship): Relationship to the associated RNAFold object.
+    """
     id: int = Field(default=None, primary_key=True)
     rna_fold_id: int = Field(default=None, foreign_key="rnafold.id")
     rna_fold: Optional["RNAFold"] = Relationship()
@@ -61,8 +118,17 @@ class Target(SQLModel, table=True):
     crispr_system: "CRISPRSystem" = Relationship()
     z_score: Optional[float]
 
-    def get_build_oligos(self, session: Session, dna_build_method: str):
+    def get_build_oligos(self, session: Session, dna_build_method: str) -> List[Dict[str, str]]:
+        """
+        Generate build oligos for the target based on the specified DNA build method.
 
+        Args:
+            session (Session): The database session.
+            dna_build_method (str): The name of the DNA build method to use.
+
+        Returns:
+            List[Dict[str, str]]: A list of dictionaries containing primer names and sequences.
+        """
         restricted_env = {
             'target': self.__dict__,
             'reverse_complement': reverse_complement,
@@ -73,8 +139,6 @@ class Target(SQLModel, table=True):
 
         oligo_build_methods = self.crispr_system.oligo_build_methods
 
-        print(self.crispr_system)
-        print(self.crispr_system.oligo_build_methods)
 
         for oligo_build_method in oligo_build_methods:
             for instruction_build_oligo in oligo_build_method['oligos']:
@@ -89,6 +153,20 @@ class Target(SQLModel, table=True):
         return build_oligos
     
 class Locus(SQLModel, table=True):
+    """
+    Represents a locus in the database.
+
+    Attributes:
+        id (int): The unique identifier for the locus.
+        orf (str): The Open Reading Frame (ORF) of the locus.
+        symbol (str): The symbol associated with the locus.
+        sequence (str): The DNA sequence of the locus.
+        start_orf (int): The start position of the ORF in the sequence.
+        end_orf (int): The end position of the ORF in the sequence.
+        strain_id (int): The ID of the associated strain.
+        strain (relationship): Relationship to the associated Strain object.
+        targets (relationship): Relationship to Target objects associated with this locus.
+    """
     id: int = Field(default=None, primary_key=True)
     created: datetime = Field(default_factory=datetime.now)
     sgd_id: str = Field(default='', alias='sgdId')
@@ -121,18 +199,36 @@ class Locus(SQLModel, table=True):
     def repair_oligo_rv(self) -> str:
         return reverse_complement(self.repair_oligo_fw)
 
-    def get_diagnostic_primers(self, session: Session):
-        def is_valid_dna_sequence(sequence):
+    def get_diagnostic_primers(self, session: Session) -> Tuple[str, str]:
+        """
+        Generate diagnostic primers for the locus.
+
+        Args:
+            session (Session): The database session.
+
+        Returns:
+            Tuple[str, str]: A tuple containing the forward and reverse diagnostic primer sequences.
+        """
+        def is_valid_dna_sequence(sequence: str) -> bool:
+            """
+            Check if the given sequence is a valid DNA sequence.
+
+            Args:
+                sequence (str): The DNA sequence to check.
+
+            Returns:
+                bool: True if the sequence is valid, False otherwise.
+            """
             return bool(re.match("^[AGTC]*$", sequence))
                 
         if self.forward_diagnostic_primer_id and self.reverse_diagnostic_primer_id:
             return self.forward_diagnostic_primer.sequence, self.reverse_diagnostic_primer.sequence
 
-        if self.start_orf <= 85 or (len(self.sequence) - self.end_orf) <= 85:
+        if self.start_orf <= MINIMUM_FLANKING_SEQUENCE or (len(self.sequence) - self.end_orf) <= MINIMUM_FLANKING_SEQUENCE:
             return '', ''
 
-        ko_locus = self.sequence[:self.start_orf-60] + self.sequence[self.end_orf+60:]
-        if len(ko_locus) <= 50:
+        ko_locus = self.sequence[:self.start_orf-KNOCKOUT_LOCUS_PADDING] + self.sequence[self.end_orf+KNOCKOUT_LOCUS_PADDING:]
+        if len(ko_locus) <= MINIMUM_KNOCKOUT_LOCUS_LENGTH:
             return '', ''
         
         # we don't support ambigious bases.
@@ -176,7 +272,18 @@ class Locus(SQLModel, table=True):
         return forward_primer_sequence, reverse_primer_sequence
     
 
-def get_locus_from_database(session: Session, locus_id: int, crispr_system_id: int) -> List[Target]:
+def get_locus_from_database(session: Session, locus_id: int, crispr_system_id: int) -> Locus:
+    """
+    Get the locus from the database with the given ID and CRISPR system ID.
+
+    Args:
+        session (Session): The database session.
+        locus_id (int): The ID of the locus.
+        crispr_system_id (int): The ID of the CRISPR system.
+
+    Returns:
+        Locus: The locus object with the targets and RNA fold loaded.
+    """
     # Query the locus with targets and rna_fold loaded
     locus = session.query(Locus).options(
         joinedload(Locus.targets.and_(Target.crispr_system_id == crispr_system_id)).joinedload(Target.rna_fold)
@@ -184,10 +291,32 @@ def get_locus_from_database(session: Session, locus_id: int, crispr_system_id: i
 
     return locus
 
-def no_filter(session, locus: Locus, targets: list):
+def no_filter(session: Session, locus: Locus, targets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    A no-op filter function that returns the input targets without modification.
+
+    Args:
+        session (Session): The database session (unused).
+        locus (Locus): The Locus object containing the targets (unused).
+        targets (List[Dict[str, Any]]): A list of target dictionaries.
+
+    Returns:
+        List[Dict[str, Any]]: The input list of target dictionaries, unmodified.
+    """
     return targets
 
-def filter_cas9_targets_with_bowtie(session, locus: Locus, targets: list):
+def filter_cas9_targets_with_bowtie(session: Session, locus: Locus, targets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Filter Cas9 targets using Bowtie alignment.
+
+    Args:
+        session (Session): The database session.
+        locus (Locus): The Locus object containing the targets.
+        targets (List[Dict[str, Any]]): A list of target dictionaries to filter.
+
+    Returns:
+        List[Dict[str, Any]]: A filtered list of target dictionaries.
+    """
     # Add 8 different sequences per target
     nucleotides = ['A', 'T', 'G', 'C']
     variants = []
@@ -230,7 +359,17 @@ def filter_cas9_targets_with_bowtie(session, locus: Locus, targets: list):
 
 
 def search_targets(session: Session, locus_id: int, crispr_system_id: int) -> List[Target]:
-    #locus = session.query(Locus).filter(Locus.id == locus_id).first()
+    """
+    Search for targets in a given locus for a specific CRISPR system.
+
+    Args:
+        session (Session): The database session.
+        locus_id (int): The ID of the locus to search in.
+        crispr_system_id (int): The ID of the CRISPR system to use.
+
+    Returns:
+        List[Target]: A list of Target objects found for the given locus and CRISPR system.
+    """
     crispr_system = session.query(CRISPRSystem).filter(CRISPRSystem.id == crispr_system_id).first()
     
     locus = get_locus_from_database(session=session, locus_id=locus_id, crispr_system_id=crispr_system_id)
@@ -239,11 +378,7 @@ def search_targets(session: Session, locus_id: int, crispr_system_id: int) -> Li
         return []
 
     if locus.targets:
-        print("get_targets: return existing ones")
         return locus.targets
-    else:
-        print("continue")
-
 
     reg = re.compile(rf'{crispr_system.recognition_sequence_regexp}')
     orf_sequence = locus.sequence[locus.start_orf:locus.end_orf]
@@ -268,13 +403,14 @@ def search_targets(session: Session, locus_id: int, crispr_system_id: int) -> Li
     target_objects = []
     gc_contents = []
     rna_fold_scores = []
+
     if crispr_system.target_filter_function == 'filter_cas9_targets_with_bowtie':
         targets = filter_cas9_targets_with_bowtie(session=session, locus=locus, targets=targets)
     elif crispr_system.target_filter_function == 'no_filter':
         targets = no_filter(session=session, locus=locus, targets=targets)
     else:
         raise ValueError('No filtering function defined!')
-    
+
     for target in targets:
         target['position'] = orf_sequence.find(target['sequence']) if target['sequence'] in orf_sequence else orf_sequence.find(reverse_complement(target['sequence']))
         target['GC_content'] = (target['sequence_wo_pam'].count('G') + target['sequence_wo_pam'].count('C')) / len(target['sequence_wo_pam'])
@@ -286,7 +422,7 @@ def search_targets(session: Session, locus_id: int, crispr_system_id: int) -> Li
 
         gc_contents.append(target['GC_content'])
         rna_fold_scores.append(score)
-    
+
         # Calculate ranges
     ranges = {
         'rna_fold_score': {'min': min(rna_fold_scores), 'max': max(rna_fold_scores)},
@@ -310,24 +446,12 @@ def search_targets(session: Session, locus_id: int, crispr_system_id: int) -> Li
     session.commit()
 
     locus = get_locus_from_database(session=session, locus_id=locus_id, crispr_system_id=crispr_system_id)
-    print(locus)
     return locus.targets
 
-def getRNACentroidStructure(sequence, temperature=30):
-    settings = RNA.md()
-    settings.temperature = temperature
-    settings.dangles = 2
-    settings.noLP = 1
-
-    fc_obj = RNA.fold_compound(sequence, settings)
-    fc_obj.pf()
-    structure, value = fc_obj.centroid()
-    return structure, value
-
-def reverse_complement(sequence: str):
-    return sequence.translate(str.maketrans("ATGCNatgcn", "TACGNtacgn"))[::-1]
-
 def initialize_database():
+    """
+    Initialize the database by creating the tables and inserting initial data.
+    """
     # Create the tables if the database doesn't exist
     if not os.path.exists(DATABASE_URL.replace('sqlite:///','')):
         SQLModel.metadata.create_all(engine)

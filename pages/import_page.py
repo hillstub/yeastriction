@@ -1,43 +1,44 @@
-import os
-import sys
-import time
-import json
-from datetime import datetime
 import base64
 import io
 import subprocess
-import threading
-from dotenv import load_dotenv
-
-from models import Strain, Locus, Target, CRISPRSystem, search_targets
-
-from sqlalchemy import create_engine, select, delete, update
-from sqlalchemy.orm import sessionmaker
+from pathlib import Path
+from typing import Dict, List, Any, Tuple
 
 import dash
-from dash import html
+from dash import html, dcc, Input, Output, State, callback
 import dash_bootstrap_components as dbc
-from dash import dcc, html, Input, Output, State, MATCH, ALL, callback
-
-from pathlib import Path
 import pandas as pd
+import logging
+from sqlalchemy import create_engine, select, delete, update
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.exc import SQLAlchemyError
 
-load_dotenv()
+from config import DATABASE_URL, GENOMES_DIR, ALLOW_IMPORT
+from models import Strain, Locus
 
-DATABASE_URL = 'sqlite:///./data/database.db'
 
-GENOMES_DIR = os.getenv('GENOMES_DIR')
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-ALLOW_IMPORT = os.getenv("ALLOW_IMPORT")
-
+# Database setup
 engine = create_engine(DATABASE_URL)
 Session = sessionmaker(bind=engine)
 
 dash.register_page(__name__, path='/import')
 
-if ALLOW_IMPORT == 'True':
-    # rewrite the function to use pandas
-    def import_loci(strain_name: str, df: pd.DataFrame):
+if ALLOW_IMPORT:
+    def import_loci(strain_name: str, df: pd.DataFrame) -> Dict[str, str]:
+        """
+        Import loci data for a given strain.
+
+        Args:
+            strain_name (str): Name of the strain.
+            df (pd.DataFrame): DataFrame containing loci data.
+
+        Returns:
+            Dict[str, str]: A dictionary with a message indicating the result of the import.
+        """
         with Session() as session:
             strain = session.execute(select(Strain).where(Strain.name == strain_name)).scalars().first()
             
@@ -51,19 +52,14 @@ if ALLOW_IMPORT == 'True':
             session.execute(delete(Locus).where(Locus.strain_id == strain.id))
             session.commit()
             
-            # Read the .tab file
-            #file_path = Path(GENOMES_DIR) / f'{strain_name}.tab'
-            #df = pd.read_csv(file_path, sep='\t', header=None, names=['orf', 'symbol', 'start_orf', 'end_orf', 'sequence'])
-            
-            # if there are multiple rows with the same orf, only take the first one
+            # Process the DataFrame
             df = df.drop_duplicates(subset=['orf'], keep='first')
-
             df['strain_id'] = strain.id
             df['start_orf'] = df['start_orf'] - 1
             df['symbol'] = df['symbol'].replace('', None)
-            df['created'] = datetime.now()
+            df['created'] = pd.Timestamp.now()
             
-            # create Locus objects from the dataframe
+            # Create Locus objects from the dataframe
             loci = [Locus(**row.to_dict()) for _, row in df.iterrows()]
             session.add_all(loci)
             session.commit()
@@ -78,7 +74,17 @@ if ALLOW_IMPORT == 'True':
             
             return {"message": "Import complete"}
         
-    def save_fasta_file(content, filename):
+    def save_fasta_file(content: str, filename: str) -> Path:
+        """
+        Save a FASTA file from the uploaded content.
+
+        Args:
+            content (str): Base64 encoded content of the file.
+            filename (str): Name of the file to save.
+
+        Returns:
+            Path: Path object pointing to the saved file.
+        """
         data = content.split(',')[1]
         file_data = base64.b64decode(data)
         file_path = Path(GENOMES_DIR) / filename
@@ -86,7 +92,16 @@ if ALLOW_IMPORT == 'True':
             f.write(file_data)
         return file_path
 
-    def index_fasta_file(file_path):
+    def index_fasta_file(file_path: Path) -> Dict[str, str]:
+        """
+        Index a FASTA file using bowtie-build.
+
+        Args:
+            file_path (Path): Path to the FASTA file.
+
+        Returns:
+            Dict[str, str]: A dictionary with a message indicating the result of the indexing.
+        """
         try:
             index_base = file_path.with_suffix('')  # Remove the .fasta or .fa extension
             subprocess.run(['bowtie-build', str(file_path), str(index_base)], check=True)
@@ -94,12 +109,22 @@ if ALLOW_IMPORT == 'True':
         except subprocess.CalledProcessError as e:
             return {"message": f"Error indexing {file_path}: {e}"}
 
-    def parse_contents(contents, filename):
+    def parse_contents(contents: str, filename: str) -> html.Div:
+        """
+        Parse the contents of an uploaded file.
+
+        Args:
+            contents (str): Base64 encoded content of the file.
+            filename (str): Name of the uploaded file.
+
+        Returns:
+            html.Div: A Dash component containing the result message.
+        """
         content_type, content_string = contents.split(',')
         try:
             if filename.endswith('.tab'):
                 decoded = base64.b64decode(content_string)
-                df = pd.read_csv(io.StringIO(decoded.decode('utf-8')), sep='\t', header=None, names=['orf', 'symbol', 'start_orf', 'end_orf', 'sequence'])
+                df = pd.read_csv(io.StringIO(decoded.decode('utf-8')), sep='\t')
                 strain_name = Path(filename).stem
                 result = import_loci(strain_name, df)
                 return html.Div([f'File {filename}: {result["message"]}'])
@@ -150,7 +175,18 @@ if ALLOW_IMPORT == 'True':
         prevent_initial_call=True,
         background=True
     )
-    def update_output(set_progress, contents, filenames):
+    def update_output(set_progress, contents: List[str], filenames: List[str]) -> List[html.Div]:
+        """
+        Process uploaded files and update the output.
+
+        Args:
+            set_progress: Function to set the progress of the operation.
+            contents (List[str]): List of file contents.
+            filenames (List[str]): List of filenames.
+
+        Returns:
+            List[html.Div]: List of Dash components containing the results.
+        """
         if contents is not None:
             file_dict = {}
             for content, filename in zip(contents, filenames):
@@ -165,8 +201,6 @@ if ALLOW_IMPORT == 'True':
             processed_files = 0
 
             for strain_name, files in file_dict.items():
-
-
                 if '.tab' in files and ('.fasta' in files or '.fa' in files):
                     fasta_key = '.fasta' if '.fasta' in files else '.fa'
                     tab_content = files['.tab']
@@ -184,7 +218,6 @@ if ALLOW_IMPORT == 'True':
                     children.append(html.Div([f'Error: Missing .tab or .fasta file for strain {strain_name}']))
                     set_progress((processed_files, total_files, children)) 
 
-
             return children
 else:
     layout = dbc.Container([
@@ -192,6 +225,6 @@ else:
             dbc.Col(html.H2("Access Denied"), className="text-center my-4")
         ]),
         dbc.Row([
-            dbc.Col(html.P("You do not have permission to access this page. Please run the script with the --allow-import flag."), className="mb-4")
+            dbc.Col(html.P("You do not have permission to access this page. If you want to import new genomes, please run the app with the environment variable ALLOW_IMPORT set to true."), className="mb-4")
         ])
     ], fluid=True)
